@@ -1,4 +1,4 @@
-import React from "react";
+import React, { ComponentProps } from "react";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { renderToString } from "react-dom/server";
 import { readdir } from "fs";
@@ -10,11 +10,19 @@ const host = "localhost";
 const pagesDir = "./src/pages";
 
 const routes = new Map<string, Handler>();
+const protectedRoutes = new Map<string, React.FC>();
+
+// const NotFoundPage = import("./src/pages/_404");
 
 const app = createServer((req, res) => {
   const handler = routes.get(req.url!);
-  const notFound = () => {
-    res.end(createDocument(`<h1>404 Not found</h1>`));
+  const notFound = async () => {
+    const NotFoundPage = protectedRoutes.get("_404");
+    const _404html = await render(NotFoundPage).catch((e) => {
+      console.log('catch', e)
+      return `<h1>404 Not found</h1>`;
+    });
+    res.end(createDocument(_404html));
   };
   res.setHeader("Content-type", "text/html");
   handler?.(req, res) || notFound();
@@ -43,7 +51,16 @@ async function createRoute(routePath: string, fileName?: string) {
     `${pagesDir}/${fileName}`
   );
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
-    if (typeof Component !== "function") {
+    const configs = await getProps?.();
+    const props = configs?.props || {};
+
+    let html: string;
+    let document: string | undefined;
+
+    try {
+      html = await render(Component, props);
+      document = createDocument(html);
+    } catch {
       // if (process.env.NODE_ENV !== "production") {
       res.writeHead(404);
       res.end(
@@ -55,25 +72,28 @@ async function createRoute(routePath: string, fileName?: string) {
       );
       // }
     }
-
-    const configs = await getProps?.();
-    const props = configs?.props || {};
-
-    let component: string;
-    let document: string | undefined;
-
-    try {
-      component = renderToString(React.createElement(Component, props));
-      document = createDocument(component);
-    } catch {}
-
     res.end(document);
   };
 
   routes.set(routePath, handler);
 }
 
-readdir(pagesDir, (err, files) => {
+const render = async (
+  component: unknown,
+  props: ComponentProps<any> = {}
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    if (typeof component === "function") {
+      resolve(
+        renderToString(React.createElement(component as React.FC, props))
+      );
+      return;
+    }
+    reject();
+  });
+};
+
+readdir(pagesDir, async (err, files) => {
   if (err) {
     throw err;
   }
@@ -88,12 +108,16 @@ readdir(pagesDir, (err, files) => {
         continue;
       }
       createRoute("/" + fileName, path);
-      continue;
+    } else {
+      console.warn(
+        `[${path}]: create files with only react-supported extentions in pages folder`
+      );
     }
 
-    console.warn(
-      `[${path}]: create only react-supported extenstions in pages folder`
-    );
+    if (path.startsWith("_")) {
+      const { default: module } = await import(pagesDir + "/" + path);
+      protectedRoutes.set(path, module);
+    }
   }
 });
 
