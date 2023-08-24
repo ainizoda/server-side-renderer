@@ -7,15 +7,18 @@ type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
 const port = 9999;
 const host = "localhost";
-const pagesDir = "./client/src/pages";
+const pagesDir = "./src/pages";
 
 const routes = new Map<string, Handler>();
 
 const app = createServer((req, res) => {
   const handler = routes.get(req.url!);
+  const notFound = () => {
+    res.end(createDocument(`<h1>404 Not found</h1>`));
+  };
   res.setHeader("Content-type", "text/html");
+  handler?.(req, res) || notFound();
 
-  handler?.(req, res);
   console.log(req.url);
 });
 
@@ -35,18 +38,19 @@ const createDocument = (content: string) => `<!DOCTYPE html>
   </body>
 </html>`;
 
-function createRoute(routePath: string, fileName?: string) {
+async function createRoute(routePath: string, fileName?: string) {
+  const { getProps, default: Component } = await import(
+    `${pagesDir}/${fileName}`
+  );
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
-    const { getProps, default: Component } = await import(
-      `${pagesDir}/${fileName}`
-    );
-
     if (typeof Component !== "function") {
       // if (process.env.NODE_ENV !== "production") {
       res.writeHead(404);
       res.end(
         createDocument(
-          `<div style={{ color: '#f00' }}>Component is not defined or not exported as default at ${pagesDir}/${fileName}</div>`
+          `<div style={{ color: '#f00' }}>
+             Component is not defined or not exported as default at ${pagesDir}/${fileName}
+           </div>`
         )
       );
       // }
@@ -74,6 +78,7 @@ readdir(pagesDir, (err, files) => {
     throw err;
   }
   const allowedExtensions = ["jsx", "tsx", "js"];
+
   for (let path of files) {
     const [fileName, extenstion] = path.split(".");
 
@@ -85,6 +90,7 @@ readdir(pagesDir, (err, files) => {
       createRoute("/" + fileName, path);
       continue;
     }
+
     console.warn(
       `[${path}]: create only react-supported extenstions in pages folder`
     );
